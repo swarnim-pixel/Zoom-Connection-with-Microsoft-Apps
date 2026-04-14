@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zoom X Word</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 920px;
+      margin: 40px auto;
+      padding: 0 16px;
+    }
+    h1 {
+      text-align: center;
+    }
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin: 24px 0;
+      flex-wrap: wrap;
+    }
+    button {
+      padding: 12px 18px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    .status {
+      margin: 12px auto 20px;
+      padding: 10px 12px;
+      max-width: 760px;
+      border-radius: 8px;
+      background: #f5f5f5;
+      text-align: center;
+      word-break: break-word;
+    }
+    .card {
+      border: 1px solid #ddd;
+      padding: 12px;
+      margin: 12px 0;
+      border-radius: 8px;
+    }
+    .meta {
+      color: #666;
+      font-size: 13px;
+      margin-top: 6px;
+    }
+    .debug {
+      margin-top: 24px;
+      padding: 12px;
+      background: #fafafa;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>Zoom X Word</h1>
+
+  <div class="actions">
+    <button id="connectBtn">Connect MS Account</button>
+    <button id="listBtn">Show Last 3 Documents</button>
+    <button id="metaBtn">Metadata for Latest Document</button>
+    <button id="debugBtn">Run Debug Check</button>
+  </div>
+
+  <div id="status" class="status">Loading app...</div>
+  <div id="documents"></div>
+  <div id="latestMetadata"></div>
+  <div id="debug" class="debug"></div>
+
+  <script src="/sdk.js"></script>
+  <script>
+    let zoomReady = false;
+    let linkId = localStorage.getItem("wordLinkId");
+
+    if (!linkId) {
+      linkId = crypto.randomUUID();
+      localStorage.setItem("wordLinkId", linkId);
+    }
+
+    const statusEl = document.getElementById("status");
+    const docsEl = document.getElementById("documents");
+    const latestMetadataEl = document.getElementById("latestMetadata");
+    const debugEl = document.getElementById("debug");
+
+    function setStatus(message) {
+      statusEl.textContent = message;
+      console.log("[STATUS]", message);
+    }
+
+    function appendDebug(label, value) {
+      const line = `${label}: ${typeof value === "string" ? value : JSON.stringify(value, null, 2)}`;
+      debugEl.textContent += line + "\n";
+      console.log("[DEBUG]", label, value);
+    }
+
+    async function initZoom() {
+      debugEl.textContent = "";
+
+      appendDebug("window.location.href", window.location.href);
+      appendDebug("window.location.origin", window.location.origin);
+      appendDebug("navigator.userAgent", navigator.userAgent);
+      appendDebug("linkId", linkId);
+      appendDebug("window.zoomSdk present", !!window.zoomSdk);
+
+      try {
+        if (!window.zoomSdk) {
+          setStatus("Zoom SDK script missing");
+          return;
+        }
+
+        setStatus("Zoom SDK detected, configuring...");
+
+        const result = await window.zoomSdk.config({
+          version: "0.16",
+          capabilities: ["openUrl"]
+        });
+
+        zoomReady = true;
+        appendDebug("zoomSdk.config result", result || "ok");
+        setStatus("Zoom SDK ready");
+      } catch (err) {
+        appendDebug("zoomSdk.config error", err?.message || String(err));
+        setStatus("Zoom SDK config failed");
+      }
+    }
+
+    async function checkConnectionStatus() {
+      try {
+        const res = await fetch(`/auth/outlook/status?linkId=${encodeURIComponent(linkId)}`);
+        const data = await res.json();
+        appendDebug("auth/outlook/status", data);
+
+        if (data.connected) {
+          setStatus(`Microsoft connected: ${data.account || "unknown account"}`);
+          return true;
+        }
+
+        return false;
+      } catch (err) {
+        appendDebug("checkConnectionStatus error", err?.message || String(err));
+        return false;
+      }
+    }
+
+    async function pollForConnection() {
+      setStatus("Waiting for Microsoft connection...");
+
+      let tries = 0;
+      const maxTries = 60;
+
+      const timer = setInterval(async () => {
+        tries += 1;
+        const connected = await checkConnectionStatus();
+
+        if (connected) {
+          clearInterval(timer);
+          setStatus("Microsoft connected. You can use the document buttons now.");
+        } else if (tries >= maxTries) {
+          clearInterval(timer);
+          setStatus("Connection timeout. Try Connect MS Account again.");
+        }
+      }, 2000);
+    }
+
+    async function connectMicrosoft() {
+      const authUrl = `${window.location.origin}/auth/outlook/start?linkId=${encodeURIComponent(linkId)}`;
+
+      appendDebug("connectMicrosoft clicked", new Date().toISOString());
+      appendDebug("authUrl", authUrl);
+
+      try {
+        pollForConnection();
+
+        if (zoomReady && window.zoomSdk) {
+          setStatus("Opening Microsoft sign-in via Zoom SDK...");
+          await window.zoomSdk.openUrl({ url: authUrl });
+          appendDebug("zoomSdk.openUrl", "called successfully");
+          return;
+        }
+
+        setStatus("Zoom SDK not ready. Fallback redirect...");
+        window.location.href = authUrl;
+      } catch (err) {
+        appendDebug("openUrl error", err?.message || String(err));
+        setStatus("openUrl failed. Fallback redirect...");
+        window.location.href = authUrl;
+      }
+    }
+
+    async function showLastThreeDocuments() {
+      setStatus("Loading last 3 Word documents...");
+      docsEl.innerHTML = "";
+
+      try {
+        const res = await fetch(`/word/docs?linkId=${encodeURIComponent(linkId)}`, {
+          credentials: "include"
+        });
+
+        const data = await res.json();
+        appendDebug("word/docs status", res.status);
+        appendDebug("word/docs response", data);
+
+        if (!res.ok) {
+          setStatus(data.message || data.error || "Failed to load documents");
+          return;
+        }
+
+        const documents = data.documents || [];
+        setStatus(`Loaded ${documents.length} Word document(s)`);
+
+        if (!documents.length) {
+          docsEl.innerHTML = "<p>No Word documents found in OneDrive root.</p>";
+          return;
+        }
+
+        docsEl.innerHTML = documents.map((doc, index) => `
+          <div class="card">
+            <div><strong>#${index + 1} Name:</strong> ${doc.name}</div>
+            <div class="meta"><strong>Last Modified:</strong> ${doc.lastModifiedDateTime || ""}</div>
+            <div class="meta"><strong>Created:</strong> ${doc.createdDateTime || ""}</div>
+            <div class="meta"><strong>Size:</strong> ${doc.size || 0} bytes</div>
+            <div class="meta"><strong>Path:</strong> ${doc.parentPath || ""}</div>
+            <div class="meta"><strong>MIME Type:</strong> ${doc.mimeType || ""}</div>
+          </div>
+        `).join("");
+      } catch (err) {
+        appendDebug("showLastThreeDocuments error", err?.message || String(err));
+        setStatus("Request failed while loading documents");
+      }
+    }
+
+    async function showLatestDocumentMetadata() {
+      setStatus("Loading latest document metadata...");
+      latestMetadataEl.innerHTML = "";
+
+      try {
+        const res = await fetch(`/word/latest-metadata?linkId=${encodeURIComponent(linkId)}`, {
+          credentials: "include"
+        });
+
+        const data = await res.json();
+        appendDebug("word/latest-metadata status", res.status);
+        appendDebug("word/latest-metadata response", data);
+
+        if (!res.ok) {
+          setStatus(data.message || data.error || "Failed to load latest metadata");
+          return;
+        }
+
+        if (!data.document) {
+          setStatus("No Word document found for metadata");
+          latestMetadataEl.innerHTML = "<p>No latest Word document found.</p>";
+          return;
+        }
+
+        const doc = data.document;
+
+        setStatus("Loaded latest document metadata");
+
+        latestMetadataEl.innerHTML = `
+          <div class="card">
+            <div><strong>Latest Document:</strong> ${doc.name}</div>
+            <div class="meta"><strong>Last Modified:</strong> ${doc.lastModifiedDateTime || ""}</div>
+            <div class="meta"><strong>Created:</strong> ${doc.createdDateTime || ""}</div>
+            <div class="meta"><strong>Size:</strong> ${doc.size || 0} bytes</div>
+            <div class="meta"><strong>Path:</strong> ${doc.parentPath || ""}</div>
+            <div class="meta"><strong>MIME Type:</strong> ${doc.mimeType || ""}</div>
+            <div class="meta"><strong>Document ID:</strong> ${doc.id || ""}</div>
+          </div>
+        `;
+      } catch (err) {
+        appendDebug("showLatestDocumentMetadata error", err?.message || String(err));
+        setStatus("Request failed while loading latest metadata");
+      }
+    }
+
+    async function runDebugCheck() {
+      try {
+        setStatus("Running debug check...");
+        const res = await fetch("/debug/sdk");
+        const data = await res.json();
+        appendDebug("debug/sdk response", data);
+
+        await checkConnectionStatus();
+
+        setStatus("Debug check completed");
+      } catch (err) {
+        appendDebug("debug check error", err?.message || String(err));
+        setStatus("Debug check failed");
+      }
+    }
+
+    document.getElementById("connectBtn").addEventListener("click", connectMicrosoft);
+    document.getElementById("listBtn").addEventListener("click", showLastThreeDocuments);
+    document.getElementById("metaBtn").addEventListener("click", showLatestDocumentMetadata);
+    document.getElementById("debugBtn").addEventListener("click", runDebugCheck);
+
+    initZoom();
+    checkConnectionStatus();
+  </script>
+</body>
+</html>
