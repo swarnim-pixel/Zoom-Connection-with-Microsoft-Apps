@@ -181,16 +181,6 @@ Zoom → Backend → Microsoft Graph
 
 ---
 
-# 🚀 Future Improvements
-
-- Persistent storage (DB)
-- Nested folder support
-- Document preview parsing
-- File upload/create
-- Deployment (no ngrok)
-
----
-
 # 🏁 Summary
 
 This project demonstrates:
