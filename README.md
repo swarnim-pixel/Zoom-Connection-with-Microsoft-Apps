@@ -142,17 +142,6 @@ Zoom App → Backend → Microsoft OAuth → Access Token → Microsoft Graph �
 
 ---
 
-# ⚠️ Limitations
-
-## ❌ Cannot open Word inside Zoom
-- Microsoft blocks embedding in webviews
-
-## ❌ No persistence
-- Tokens stored in-memory
-- Restart server → reconnect required
-
----
-
 # 🧠 Key Concepts
 
 ### Backend-mediated token sharing
